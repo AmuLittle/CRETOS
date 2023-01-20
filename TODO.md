@@ -1,0 +1,4 @@
+- [ ] triggers
+- [ ] json saves
+- [ ] lua integration
+- [ ] replace lua with Sunekits?
