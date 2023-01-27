@@ -4,5 +4,5 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      run: sudo apt update
-      run: sudo apt upgrade -y
+      - run: sudo apt update
+      - run: sudo apt upgrade -y
