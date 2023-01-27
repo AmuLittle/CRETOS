@@ -9,14 +9,14 @@ define DEFAULT_VAR =
     endif
 endef
 
-$(eval $(call DEFAULT_VAR,CC,g++))
+$(eval $(call DEFAULT_VAR,CC,g++-10))
 
 CFLAGS ?=
 CPPFLAGS ?=
 
-override CFLAGS += -lncurses
+override CFLAGS += -lncurses -lpthread -std=c++20
 
-override CFILES = $(shell find -type f -name "*.cpp")
+override CFILES = $(shell find -type f -name "*.c") $(shell find -type f -name "*.cpp")
 override GARBAGE = $(shell find -name "bin" | grep "./bin")
 
 .PHONY: all

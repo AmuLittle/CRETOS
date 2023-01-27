@@ -1,5 +1,11 @@
 #ifndef TEXT_RPG
-#include <ncurses.h>
+#ifdef __cplusplus
+extern "C" {
+#endif
+    #include <ncurses.h>
+#ifdef __cplusplus
+}
+#endif
 // C & C++ CODE
 
 typedef enum {
@@ -17,14 +23,6 @@ static int RPG_PLAYER_POS[2] = {0 ,0};
 static char RPG_PLAYER_SYMBOL = 'X';
 static RPG_Dir RPG_PLAYER_DIR = RPG_NO_DIRECTION;
 
-void RPG_init() {
-    initscr();
-    raw();
-    keypad(stdscr, TRUE);
-    noecho();
-    scrollok(stdscr, TRUE);
-}
-
 void RPG_terminate(int __status) {
     endwin();
     exit(__status);
@@ -35,6 +33,8 @@ void RPG_terminate(int __status) {
 #include <string>
 #include <vector>
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 namespace RPG {
 
@@ -44,7 +44,8 @@ namespace RPG {
             std::string name;
             int pos[2];
             char symbol;
-            Entity(std::string entity_name, int posX = 0, int posY = 0, char entity_symbol = 'X') {
+            bool multiplayer;
+            Entity(std::string entity_name, int posX = 0, int posY = 0, char entity_symbol = 'X', bool is_multiplayer = false) {
                 int id_gen;
                 id = id_gen;
                 id_gen++;
@@ -52,6 +53,7 @@ namespace RPG {
                 pos[0] = posX;
                 pos[1] = posY;
                 symbol = entity_symbol;
+                multiplayer = is_multiplayer;
             }
     };
     static std::vector<Entity> _entity_stack = std::vector<Entity>();
@@ -111,11 +113,22 @@ namespace RPG {
             }
     };
     static Board DEFAULT_BOARD = Board("DEFAULT", 5, 5);
+    bool do_redraw = false;
+    bool stop_draw = false;
 }
 
+
 static RPG::Board* RPG_PLAYER_BOARD = &RPG::DEFAULT_BOARD;
-void RPG_PLAYER_move(int x, int y, RPG::Board* board = RPG_PLAYER_BOARD) {
+
+void RPG_PLAYER_teleport(int x, int y, RPG::Board* board = RPG_PLAYER_BOARD) {
+    bool redraw = false;
+    if (RPG_PLAYER_BOARD != board) {
+        redraw = true;
+    }
     RPG_PLAYER_BOARD = board;
+    if (redraw) {
+        RPG::do_redraw = true;
+    }
     if (x >= 0 && x < RPG_PLAYER_BOARD->dim[0]) {
         RPG_PLAYER_POS[0] = x;
     }
@@ -124,146 +137,185 @@ void RPG_PLAYER_move(int x, int y, RPG::Board* board = RPG_PLAYER_BOARD) {
     }
 }
 
-namespace RPG {
-    void draw() {
-        const char* facing_dir = "";
-        switch (RPG_PLAYER_DIR) {
-            case RPG_NORTH:
-                facing_dir = "North";
-                break;
-            case RPG_EAST:
-                facing_dir = "East";
-                break;
-            case RPG_SOUTH:
-                facing_dir = "South";
-                break;
-            case RPG_WEST:
-                facing_dir = "West";
-                break;
-            default:
-                facing_dir = "None";
-                break;
+void RPG_PLAYER_move(int x_additive, int y_additive) {
+    int new_pos[2] = {0, 0};
+    new_pos[0] = RPG_PLAYER_POS[0] + x_additive;
+    new_pos[1] = RPG_PLAYER_POS[1] + y_additive;
+    for (int i = 0; i < RPG_PLAYER_BOARD->entities.size(); i++) {
+        if (new_pos[0] == RPG_PLAYER_BOARD->entities[i]->pos[0] && new_pos[1] == RPG_PLAYER_BOARD->entities[i]->pos[1]) {
+            return;
         }
-        char** grid = (char**)malloc(RPG_PLAYER_BOARD->dim[1] * sizeof(char**));
+    }
+    RPG_PLAYER_teleport(new_pos[0], new_pos[1]);
+}
+
+namespace RPG {
+    void wait_for_enter() {
+        int y,x = 0;
+        getmaxyx(stdscr, y, x);
+        mvprintw(y - 1, 0, "Press any key to continue... ");
+        char ch = -1;
+        while (ch == -1) {
+            ch = getch();
+        }
+    }
+
+    void init_draw() {
+        clear();
+        refresh();
+        mvprintw(0, 0, "%s", RPG_TITLE);
+    }
+
+    void draw() {
+        char** grid = (char**)malloc(sizeof(char**) * RPG_PLAYER_BOARD->dim[1]);
         for (int i = 0; i < RPG_PLAYER_BOARD->dim[1]; i++) {
-            grid[i] = (char*)malloc(RPG_PLAYER_BOARD->dim[0] * sizeof(char*));
+            grid[i] = (char*)malloc(sizeof(char*) * RPG_PLAYER_BOARD->dim[0]);
             for (int j = 0; j < RPG_PLAYER_BOARD->dim[0]; j++) {
                 grid[i][j] = ' ';
             }
         }
-        
 
-        for (int i = 0; i < RPG_PLAYER_BOARD->portal_starts.size(); i++) {
-            if (RPG_PLAYER_BOARD->portal_starts[i]->open) {
-                grid[RPG_PLAYER_BOARD->portal_starts[i]->pos[1]][RPG_PLAYER_BOARD->portal_starts[i]->pos[0]] = RPG_PLAYER_BOARD->portal_starts[i]->symbol;
-            }
-        }
-        for (int i = 0; i < RPG_PLAYER_BOARD->portal_ends.size(); i++) {
-            if (RPG_PLAYER_BOARD->portal_ends[i]->open) {
-                grid[RPG_PLAYER_BOARD->portal_ends[i]->pos[1]][RPG_PLAYER_BOARD->portal_ends[i]->pos[0]] = RPG_PLAYER_BOARD->portal_ends[i]->symbol;
-            }
-        }
         for (int i = 0; i < RPG_PLAYER_BOARD->entities.size(); i++) {
             grid[RPG_PLAYER_BOARD->entities[i]->pos[1]][RPG_PLAYER_BOARD->entities[i]->pos[0]] = RPG_PLAYER_BOARD->entities[i]->symbol;
         }
         grid[RPG_PLAYER_POS[1]][RPG_PLAYER_POS[0]] = RPG_PLAYER_SYMBOL;
 
+        const char* dir = "None";
+        switch (RPG_PLAYER_DIR) {
+            case RPG_NORTH:
+                dir = "North";
+                break;
+            case RPG_EAST:
+                dir = "East";
+                break;
+            case RPG_SOUTH:
+                dir = "South";
+                break;
+            case RPG_WEST:
+                dir = "West";
+                break;
+            default:
+                break;
+        }
+
         refresh();
-        printw("\n");
-        printw("%s\n", RPG_TITLE);
-        printw("\n");
+        move(2, 0);
         for (int i = 0; i < RPG_PLAYER_BOARD->dim[1]; i++) {
             for (int j = 0; j < RPG_PLAYER_BOARD->dim[0]; j++) {
                 printw("[%c]", grid[i][j]);
             }
             printw("\n");
         }
-        printw("\n");
-        printw("Compass Direction: %s\n", facing_dir);
-        printw("\n");
-        printw("Input (help for help): ");
+        int y,x = 0;
+        getmaxyx(stdscr, y, x);
+        mvprintw(y - 2, 0, "Compass Direction: %s\n", dir);
+        printw("Input (h for help): ");
+        refresh();
     }
 
-    void wait_for_enter() {
-        printw("Press any key to continue... ");
-        char ch;
-        ch = getch();
+    bool interact(int posX, int posY) {
+        Entity* target = nullptr;
+        for (int i = 0; i < RPG_PLAYER_BOARD->entities.size(); i++) {
+            if (RPG_PLAYER_BOARD->entities[i]->pos[0] == posX && RPG_PLAYER_BOARD->entities[i]->pos[1] == posY) {
+                target = RPG_PLAYER_BOARD->entities[i];
+                break;
+            }
+        }
+        if (target != nullptr) {
+            clear();
+            refresh();
+            mvprintw(0, 0, "You cannot interact with this entity");
+            wait_for_enter();
+            init_draw();
+        }
+        return false;
     }
 
     void input() {
-        std::string input = "";
-        while (true) {
+        char c = getch();
+        if (c == 27) {
+            clear();
             refresh();
-            char ch = getch();
-            if (ch == '\n') {
-                printw("\n");
-                break;
+            mvprintw(0, 0, "Are you sure you want to quit");
+            int y,x = 0;
+            getmaxyx(stdscr, y, x);
+            mvprintw(y - 1, 0, "Input [N/y]: ");
+            char ch = -1;
+            while (ch == -1) {
+                ch = getch();
             }
-            else if (ch == 3) {
+            if (ch == 'y') {
                 RPG_terminate(0);
             }
-            else if (ch == 7) {
-                if (input.length() > 0) {
-                    input.pop_back();
-                    int x,y = 0;
-                    getyx(stdscr, y, x);
-                    mvaddch(y, x - 1, ' ');
-                    move(y, x - 1);
-                }
-            }
-            else {
-                input.push_back(ch);
-                printw("%c", ch);
-            }
+            init_draw();
         }
-        refresh();
-        if (!input.compare("help")) {
-            printw("\n");
-            printw("Help is comming soon!\n");
-            printw("If this is an alpha or beta build please refer to README.md\n");
-            printw("\n");
+        else if (c == 'h') {
+            clear();
+            refresh();
+            mvprintw(0, 0, "HELP:\n");
+            printw("wasd to move\n");
+            printw("e to interact\n");
+            printw("i to show inventory\n");
+            printw("p to show character stats\n");
+            printw("h to show this menu\n");
             wait_for_enter();
+            init_draw();
         }
-        else if (!input.compare("quit")) {
-            printw("\n");
-            RPG_terminate(0);
+        else if (c == 'w') {
+            RPG_PLAYER_DIR = RPG_NORTH;
+            RPG_PLAYER_move(0, -1);
         }
-        else {
-            for (int i = 0; i < input.length(); i++) {
-                int player_posX = RPG_PLAYER_POS[0];
-                int player_posY = RPG_PLAYER_POS[1];
-                if (input[i] == 'w') {
-                    RPG_PLAYER_DIR = RPG_NORTH;
-                    player_posY--;
-                    RPG_PLAYER_move(player_posX, player_posY);
-                    continue;
-                }
-                else if (input[i] == 'd') {
-                    RPG_PLAYER_DIR = RPG_EAST;
-                    player_posX++;
-                    RPG_PLAYER_move(player_posX, player_posY);
-                    continue;
-                }
-                else if (input[i] == 's') {
-                    RPG_PLAYER_DIR = RPG_SOUTH;
-                    player_posY++;
-                    RPG_PLAYER_move(player_posX, player_posY);
-                    continue;
-                }
-                else if (input[i] == 'a') {
-                    RPG_PLAYER_DIR = RPG_WEST;
-                    player_posX--;
-                    RPG_PLAYER_move(player_posX, player_posY);
-                    continue;
-                }
+        else if (c == 'd') {
+            RPG_PLAYER_DIR = RPG_EAST;
+            RPG_PLAYER_move(1, 0);
+        }
+        else if (c == 's') {
+            RPG_PLAYER_DIR = RPG_SOUTH;
+            RPG_PLAYER_move(0, 1);
+        }
+        else if (c == 'a') {
+            RPG_PLAYER_DIR = RPG_WEST;
+            RPG_PLAYER_move(-1, 0);
+        }
+        else if (c == 'e') {
+            int target[2];
+            target[0] = RPG_PLAYER_POS[0];
+            target[1] = RPG_PLAYER_POS[1];
+            switch (RPG_PLAYER_DIR) {
+                case RPG_NORTH:
+                    target[1] -= 1;
+                    break;
+                case RPG_EAST:
+                    target[0] += 1;
+                    break;
+                case RPG_SOUTH:
+                    target[1] += 1;
+                    break;
+                case RPG_WEST:
+                    target[0] -= 1;
+                    break;
+                default:
+                    break;
+            }
+            if (interact(target[0], target[1])) {
+                RPG_terminate(0);
             }
         }
     }
 
     void start_game() {
-        while (true) {
-            draw();
-            input();
+        initscr();
+        raw();
+        keypad(stdscr, TRUE);
+        noecho();
+        timeout(50);
+        while (!stop_draw) {
+            init_draw();
+            do_redraw = false;
+            while (!do_redraw && !stop_draw) {
+                draw();
+                input();
+            }
         }
     }
 }
