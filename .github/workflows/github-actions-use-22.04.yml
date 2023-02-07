@@ -1,8 +1,0 @@
-name: Ubuntu 22.04
-on: [push]
-jobs:
-  build:
-    runs-on: ubuntu-22.04
-    steps:
-      - run: sudo apt update
-      - run: sudo apt upgrade -y

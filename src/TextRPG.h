@@ -1,8 +1,10 @@
 #ifndef TEXT_RPG
 #ifdef __cplusplus
-extern "C" {
+#include <LuaCpp/LuaCpp.hpp>
+extern "C" {   
 #endif
     #include <ncurses.h>
+    #include <string.h>
 #ifdef __cplusplus
 }
 #endif
@@ -28,6 +30,97 @@ void RPG_terminate(int __status) {
     exit(__status);
 }
 
+static int RPGPrint(lua_State* L) {
+    int n = lua_gettop(L);
+    for (int i = 1; i <= n; i++) {
+        if (lua_isstring(L, i)) {
+            printw(lua_tostring(L, i));
+        }
+        else if (lua_isnumber(L, i)) {
+            printw("%d", lua_tonumber(L, i));
+        }
+        else if (lua_isboolean(L, i)) {
+            if (lua_toboolean(L, i)) {
+                printw("true");
+            }
+            else {
+                printw("false");
+            }
+        }
+        else {
+            lua_pushliteral(L, "incorrect argument");
+            lua_error(L);
+        }
+    }
+    return 0;
+}
+
+static int RPGPrintln(lua_State* L) {
+    int n = lua_gettop(L);
+    for (int i = 1; i <= n; i++) {
+        if (lua_isstring(L, i)) {
+            printw(lua_tostring(L, i));
+        }
+        else if (lua_isnumber(L, i)) {
+            printw("%d", lua_tonumber(L, i));
+        }
+        else if (lua_isboolean(L, i)) {
+            if (lua_toboolean(L, i)) {
+                printw("true");
+            }
+            else {
+                printw("false");
+            }
+        }
+        else {
+            lua_pushliteral(L, "incorrect argument");
+            lua_error(L);
+        }
+    }
+    printw("\n");
+    return 0;
+}
+
+static int RPGReadln(lua_State* L) {
+    char* str = (char*)malloc(sizeof(char*) * 256);
+    char ch = getch();
+    int y,x = 0;
+    getyx(stdscr, y, x);
+    while (ch != 10) {
+        if (ch == 7 && strlen(str) > 0) { // delete
+            str[strlen(str) - 1] = '\0';
+        }
+        else if (ch == 9) { // tab
+            printw("    ");
+            strcat(str, "    ");
+        }
+        else if (ch == 2) { // down arrow
+
+        }
+        else if (ch == 3) { // up arrow
+
+        }
+        else if (ch == 4) { // left arrow
+
+        }
+        else if (ch == 5) { // right arrow
+
+        }
+        else if (ch != -1) { // exclude no char
+            printw("%c", ch);
+            strncat(str, &ch, 1);
+        }
+        mvprintw(y, x, "%s", str);
+        printw(" ");
+        move(y, x + strlen(str));
+        refresh();
+        ch = getch();
+    }
+    printw("\n");
+    lua_pushstring(L, str);
+    return 1;
+}
+
 #ifdef __cplusplus
 // C++ CODE
 #include <string>
@@ -35,8 +128,11 @@ void RPG_terminate(int __status) {
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 
 namespace RPG {
+    LuaCpp::LuaContext LUA;
 
     class Entity {
         public:
@@ -45,7 +141,8 @@ namespace RPG {
             int pos[2];
             char symbol;
             bool multiplayer;
-            Entity(std::string entity_name, int posX = 0, int posY = 0, char entity_symbol = 'X', bool is_multiplayer = false) {
+            const char* interact;
+            Entity(std::string entity_name, int posX = 0, int posY = 0, char entity_symbol = 'X', bool is_multiplayer = false, const char* interact_file = "") {
                 int id_gen;
                 id = id_gen;
                 id_gen++;
@@ -54,6 +151,7 @@ namespace RPG {
                 pos[1] = posY;
                 symbol = entity_symbol;
                 multiplayer = is_multiplayer;
+                interact = interact_file;
             }
     };
     static std::vector<Entity> _entity_stack = std::vector<Entity>();
@@ -100,8 +198,8 @@ namespace RPG {
                 portal_starts = std::vector<Portal*>();
                 portal_ends = std::vector<Portal*> ();
             }
-            void new_entity(std::string entity_name, int posX = 0, int posY = 0, char entity_symbol = 'X') {
-                Entity ent = Entity(entity_name, posX, posY, entity_symbol);
+            void new_entity(std::string entity_name, int posX = 0, int posY = 0, char entity_symbol = 'X', bool is_multiplayer = false, const char* interact_file = "") {
+                Entity ent = Entity(entity_name, posX, posY, entity_symbol, is_multiplayer, interact_file);
                 _entity_stack.push_back(ent);
                 entities.push_back(&_entity_stack[_entity_stack.size() - 1]);
             }
@@ -224,6 +322,16 @@ namespace RPG {
         if (target != nullptr) {
             clear();
             refresh();
+            if (strlen(target->interact) > 0) {
+                if (std::filesystem::exists(target->interact)) {
+                    clear();
+                    scrollok(stdscr, TRUE);
+                    LUA.CompileFileAndRun(target->interact);
+                    scrollok(stdscr, FALSE);
+                    init_draw();
+                    return false;
+                }
+            }
             mvprintw(0, 0, "You cannot interact with this entity");
             wait_for_enter();
             init_draw();
@@ -309,6 +417,11 @@ namespace RPG {
         keypad(stdscr, TRUE);
         noecho();
         timeout(50);
+        std::shared_ptr<LuaCpp::Registry::LuaLibrary> rpglib = std::make_shared<LuaCpp::Registry::LuaLibrary>("RPG");
+        rpglib->AddCFunction("print", RPGPrint);
+        rpglib->AddCFunction("println", RPGPrintln);
+        rpglib->AddCFunction("readln", RPGReadln);
+        LUA.AddLibrary(rpglib);
         while (!stop_draw) {
             init_draw();
             do_redraw = false;
