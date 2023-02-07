@@ -1,0 +1,10 @@
+name: Can Compile
+run-name: ${{ github.actor }} is checking for compilation ability
+on: [push]
+jobs:
+  Can-Compile:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sudo apt update
+      - run: sudo apt upgrade -y
+      - run: make
