@@ -7,4 +7,4 @@ jobs:
     steps:
       - run: sudo apt update
       - run: sudo apt upgrade -y
-      - run: make
+      - run: ls
